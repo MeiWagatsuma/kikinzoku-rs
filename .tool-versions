@@ -1,3 +1,3 @@
 asdf latest
-rust nightly
+rust nightly:1.77.0
 direnv 2.33.0
