@@ -1,9 +1,9 @@
-use leptos::{
-    component, create_resource, create_signal, expect_context, server, spawn_local, view, IntoView,
-    ServerFnError, SignalGet, SignalUpdate,
-};
-use leptos_meta::{provide_meta_context, Stylesheet, Title};
-use leptos_router::{Route, Router, Routes};
+use lazy_static::lazy_static;
+use leptos::*;
+use leptos_meta::*;
+use leptos_router::*;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -11,71 +11,174 @@ pub fn App() -> impl IntoView {
     provide_meta_context();
 
     view! {
-        // injects a stylesheet into the document <head>
-        // id=leptos means cargo-leptos will hot-reload this stylesheet
-        <Stylesheet id="leptos" href="/pkg/leptos_start.css"/>
-
-        // sets the document title
+        <Stylesheet id="leptos" href="/pkg/ssr_modes.css"/>
         <Title text="Welcome to Leptos"/>
 
-        // content for this welcome page
         <Router>
             <main>
                 <Routes>
+                    // We’ll load the home page with out-of-order streaming and <Suspense/>
                     <Route path="" view=HomePage/>
-                    <Route path="/*any" view=NotFound/>
+
+                    // We'll load the posts with async rendering, so they can set
+                    // the title and metadata *after* loading the data
+                    <Route
+                        path="/post/:id"
+                        view=Post
+                        ssr=SsrMode::Async
+                    />
+                    <Route
+                        path="/post_in_order/:id"
+                        view=Post
+                        ssr=SsrMode::InOrder
+                    />
                 </Routes>
             </main>
         </Router>
     }
 }
 
-/// Renders the home page of your application.
 #[component]
 fn HomePage() -> impl IntoView {
-    // a signal that controls how many cat pics we want
-    let (how_many_cats, set_how_many_cats) = create_signal(1);
-
-    // create a resource that will refetch whenever `how_many_cats` changes
-    // Creates a reactive value to update the button
-    let (count, set_count) = create_signal(0);
-    let on_click = move |_| set_count.update(|count| *count += 1);
+    // load the posts
+    let posts = create_resource(|| (), |_| async { list_post_metadata().await });
+    let posts_view = move || {
+        posts.and_then(|posts| {
+                        posts.iter()
+                            .map(|post| view! {
+                                <li>
+                                    <a href=format!("/post/{}", post.id)>{&post.title}</a> "|"
+                                    <a href=format!("/post_in_order/{}", post.id)>{&post.title}"(in order)"</a>
+                                </li>
+                            })
+                            .collect_view()
+                    })
+    };
 
     view! {
-        <h1>"Welcome to Leptos!"</h1>
-        <button on:click=on_click>"Click Me: " {count}</button>
-        <button on:click=move|_| set_how_many_cats.update(|count| *count +=1 )>"More Cats"</button>
-        <p>"cats: " {how_many_cats}</p>
-        <button on:click=move |_| {  spawn_local(async {
-            say_hello_in_server().await;
-        }) }>"hello"</button>
+        <h1>"My Great Blog"</h1>
+        <Suspense fallback=move || view! { <p>"Loading posts..."</p> }>
+            <ul>{posts_view}</ul>
+        </Suspense>
     }
 }
 
-/// 404 - Not Found
+#[derive(Params, Copy, Clone, Debug, PartialEq, Eq)]
+pub struct PostParams {
+    id: usize,
+}
+
 #[component]
-fn NotFound() -> impl IntoView {
-    // set an HTTP status code 404
-    // this is feature gated because it can only be done during
-    // initial server-side rendering
-    // if you navigate to the 404 page subsequently, the status
-    // code will not be set because there is not a new HTTP request
-    // to the server
-    // {
-    //     // this can be done inline because it's synchronous
-    //     // if it were async, we'd use a server function
-    //     let resp = expect_context::<leptos_actix::ResponseOptions>();
-    //     resp.set_status(actix_web::http::StatusCode::NOT_FOUND);
-    // }
+fn Post() -> impl IntoView {
+    let query = use_params::<PostParams>();
+    let id = move || query.with(|q| q.as_ref().map(|q| q.id).map_err(|_| PostError::InvalidId));
+    let post = create_resource(id, |id| async move {
+        match id {
+            Err(e) => Err(e),
+            Ok(id) => get_post(id)
+                .await
+                .map(|data| data.ok_or(PostError::PostNotFound))
+                .map_err(|_| PostError::ServerError), // .flatten(),
+        }
+    });
+
+    let post_view = move || {
+        post.and_then(|post| {
+            let post = post.clone().unwrap();
+            view! {
+                // render content
+                <h1>{&post.title}</h1>
+                <p>{&post.content}</p>
+
+                // since we're using async rendering for this page,
+                // this metadata should be included in the actual HTML <head>
+                // when it's first served
+                <Title text=post.title.clone()/>
+                <Meta name="description" content=post.content.clone()/>
+            }
+        })
+    };
 
     view! {
-        <h1>"Not Found"</h1>
+        <Suspense fallback=move || view! { <p>"Loading post..."</p> }>
+            <ErrorBoundary fallback=|errors| {
+                view! {
+                    <div class="error">
+                        <h1>"Something went wrong."</h1>
+                        <ul>
+                        {move || errors.get()
+                            .into_iter()
+                            .map(|(_, error)| view! { <li>{error.to_string()} </li> })
+                            .collect_view()
+                        }
+                        </ul>
+                    </div>
+                }
+            }>
+                {post_view}
+            </ErrorBoundary>
+        </Suspense>
     }
+}
+
+// Dummy API
+lazy_static! {
+    static ref POSTS: Vec<Post> = vec![
+        Post {
+            id: 0,
+            title: "My first post".to_string(),
+            content: "This is my first post".to_string(),
+        },
+        Post {
+            id: 1,
+            title: "My second post".to_string(),
+            content: "This is my second post".to_string(),
+        },
+        Post {
+            id: 2,
+            title: "My third post".to_string(),
+            content: "This is my third post".to_string(),
+        },
+    ];
+}
+
+#[derive(Error, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PostError {
+    #[error("Invalid post ID.")]
+    InvalidId,
+    #[error("Post not found.")]
+    PostNotFound,
+    #[error("Server error.")]
+    ServerError,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Post {
+    id: usize,
+    title: String,
+    content: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PostMetadata {
+    id: usize,
+    title: String,
 }
 
 #[server]
-pub async fn say_hello_in_server() -> Result<(), ServerFnError> {
-    println!("hello");
-    Err(ServerFnError::Request("hello".to_owned()))
-    // Ok(())
+pub async fn list_post_metadata() -> Result<Vec<PostMetadata>, ServerFnError> {
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    Ok(POSTS
+        .iter()
+        .map(|data| PostMetadata {
+            id: data.id,
+            title: data.title.clone(),
+        })
+        .collect())
+}
+
+#[server]
+pub async fn get_post(id: usize) -> Result<Option<Post>, ServerFnError> {
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    Ok(POSTS.iter().find(|post| post.id == id).cloned())
 }
