@@ -11,12 +11,11 @@ axum = { version = "0.6.4", optional = true }
 console_error_panic_hook = "0.1"
 console_log = "1"
 cfg-if = "1"
-leptos = { version = "0.5", features = ["nightly"] }
-leptos_axum = { version = "0.5", optional = true }
-leptos_meta = { version = "0.5", features = ["nightly"] }
-leptos_router = { version = "0.5", features = ["nightly"] }
+leptos = { version = "0.5.4", features = ["nightly"] }
+leptos_axum = { version = "0.5.4", optional = true }
+leptos_meta = { version = "0.5.4", features = ["nightly"] }
+leptos_router = { version = "0.5.4", features = ["nightly"] }
 log = "0.4"
-simple_logger = "4"
 tokio = { version = "1.25.0", optional = true }
 tower = { version = "0.4.13", optional = true }
 tower-http = { version = "0.4", features = ["fs"], optional = true }
@@ -30,15 +29,15 @@ lazy_static = "1.4.0"
 [features]
 hydrate = ["leptos/hydrate", "leptos_meta/hydrate", "leptos_router/hydrate"]
 ssr = [
-    "dep:axum",
-    "dep:tokio",
-    "dep:tower",
-    "dep:tower-http",
-    "dep:leptos_axum",
-    "leptos/ssr",
-    "leptos_meta/ssr",
-    "leptos_router/ssr",
-    "dep:tracing",
+  "dep:axum",
+  "dep:tokio",
+  "dep:tower",
+  "dep:tower-http",
+  "dep:leptos_axum",
+  "leptos/ssr",
+  "leptos_meta/ssr",
+  "leptos_router/ssr",
+  "dep:tracing",
 ]
 
 # Defines a size-optimized profile for the WASM bundle in release mode
